@@ -7,18 +7,67 @@ const moodleService = new MoodleService();
 const xmlConverter = new XmlConverterService();
 
 export class MoodleController {
-
-    // Проверка подключения
-    async checkConnection(req: Request, res: Response) {
+    async checkConnection(_req: Request, res: Response) {
         try {
             const info = await moodleService.getSiteInfo();
             res.json({ success: true, data: info });
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            res.status(500).json({ success: false, data: error.message });
         }
     }
 
-    // Импорт и создание теста (исправленная версия)
+    async importFromJson(req: Request, res: Response) {
+        try {
+            const {
+                questions,
+                categoryId,
+                courseId
+            } = req.body;
+
+            if (!questions || !Array.isArray(questions)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Необходимо поле questions (массив вопросов)'
+                });
+            }
+
+            if (!categoryId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Необходимо поле categoryId (ID категории вопросов в Moodle)'
+                });
+            }
+
+            // ШАГ 1: Конвертируем JSON в Moodle XML
+            console.log('📝 1. Конвертация JSON в Moodle XML...');
+            const xmlContent = xmlConverter.convertToMoodleXml(questions);
+
+            // Для отладки: выводим первые 500 символов XML
+            console.log('📄 XML Preview:', xmlContent.substring(0, 500) + '...');
+
+            // ШАГ 2: Отправляем XML в Moodle
+            console.log('📤 2. Отправка XML в Moodle...');
+            const result = await moodleService.importQuestionsFromXml(xmlContent, categoryId);
+
+            console.log(`✅ Успешно импортировано вопросов: ${result.imported || questions.length}`);
+
+            res.json({
+                success: true,
+                data: result,
+                xmlPreview: xmlContent.substring(0, 500) + '...',
+                message: `Импортировано ${result.imported || questions.length} вопросов`
+            });
+
+        } catch (error: any) {
+            console.error('❌ Ошибка:', error);
+            res.status(500).json({
+                success: false,
+                error: error.message,
+                details: error.response?.data || null
+            });
+        }
+    }
+
     async importAndCreateTest(req: Request, res: Response) {
         try {
             const {
@@ -31,7 +80,7 @@ export class MoodleController {
             if (!questions || !courseId || !quizName) {
                 return res.status(400).json({
                     success: false,
-                    error: 'Необходимы поля: questions, courseId, quizName'
+                    error: 'Отсутсвуют обязательные поля'
                 });
             }
 

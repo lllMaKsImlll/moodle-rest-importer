@@ -93,7 +93,6 @@ export interface BankQuestion {
     timemodified: number;
 }
 
-// Тип для результата импорта вопросов
 export interface ImportResult {
     success: boolean;
     imported: number;

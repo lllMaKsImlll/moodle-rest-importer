@@ -91,11 +91,30 @@ export class MoodleService {
 
     // Импорт вопросов из XML
     async importQuestionsFromXml(xmlContent: string, categoryId: number): Promise<ImportResult> {
-        return this.callApi<ImportResult>('question_bank_import_questions', {
-            categoryid: categoryId,
-            format: 'xml',
-            data: xmlContent
-        });
+        // Пробуем разные названия функций
+        const possibleFunctions = [
+            'core_question_import_questions',
+            'mod_quiz_import_questions',
+            'qbank_importquestions_import_questions'
+        ];
+
+        for (const funcName of possibleFunctions) {
+            try {
+                console.log(`Пробуем функцию: ${funcName}`);
+                const result = await this.callApi<ImportResult>(funcName, {
+                    categoryid: categoryId,
+                    format: 'xml',
+                    data: xmlContent
+                });
+                console.log(`✅ Успешно с функцией: ${funcName}`);
+                return result;
+            } catch (error: any) {
+                console.log(`❌ Функция ${funcName} не работает: ${error.message}`);
+                // Продолжаем пробовать следующую
+            }
+        }
+
+        throw new Error('Не найдена подходящая функция для импорта вопросов');
     }
 
     // Остальные методы...
