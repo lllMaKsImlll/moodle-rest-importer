@@ -1,203 +1,194 @@
 import { Request, Response } from 'express';
 import { MoodleService } from '../services/moodle.service';
-import { XmlConverterService } from '../services/xml-converter.service';
-import { QuestionCategory, Quiz, BankQuestion } from '../types/moodle.types';
+import { ApiResponse, EnrolledUser, EnrolUsersRequest, UnenrolmentResult } from '../types/api.types';
 
-const moodleService = new MoodleService();
-const xmlConverter = new XmlConverterService();
 
 export class MoodleController {
-    async checkConnection(_req: Request, res: Response) {
-        try {
-            const info = await moodleService.getSiteInfo();
-            res.json({ success: true, data: info });
-        } catch (error: any) {
-            res.status(500).json({ success: false, data: error.message });
-        }
+    private readonly moodleService: MoodleService;
+
+    constructor() {
+        this.moodleService = new MoodleService();
     }
 
-    async importFromJson(req: Request, res: Response) {
+    async checkConnection(_req: Request, res: Response<ApiResponse<unknown>>) {
         try {
-            const {
-                questions,
-                categoryId,
-                courseId
-            } = req.body;
-
-            if (!questions || !Array.isArray(questions)) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Необходимо поле questions (массив вопросов)'
-                });
-            }
-
-            if (!categoryId) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Необходимо поле categoryId (ID категории вопросов в Moodle)'
-                });
-            }
-
-            // ШАГ 1: Конвертируем JSON в Moodle XML
-            console.log('📝 1. Конвертация JSON в Moodle XML...');
-            const xmlContent = xmlConverter.convertToMoodleXml(questions);
-
-            // Для отладки: выводим первые 500 символов XML
-            console.log('📄 XML Preview:', xmlContent.substring(0, 500) + '...');
-
-            // ШАГ 2: Отправляем XML в Moodle
-            console.log('📤 2. Отправка XML в Moodle...');
-            const result = await moodleService.importQuestionsFromXml(xmlContent, categoryId);
-
-            console.log(`✅ Успешно импортировано вопросов: ${result.imported || questions.length}`);
-
-            res.json({
+            const info = await this.moodleService.getSiteInfo();
+            return res.json({
                 success: true,
-                data: result,
-                xmlPreview: xmlContent.substring(0, 500) + '...',
-                message: `Импортировано ${result.imported || questions.length} вопросов`
+                message: 'Подключение к Moodle установлено',
+                data: info
             });
-
         } catch (error: any) {
-            console.error('❌ Ошибка:', error);
-            res.status(500).json({
+            return res.status(500).json({
                 success: false,
-                error: error.message,
-                details: error.response?.data || null
+                error: error.message || 'Ошибка подключения к Moodle'
             });
         }
     }
 
-    async importAndCreateTest(req: Request, res: Response) {
+    async enrolUserToCourse(req: Request<{ userId: string }>, res: Response<ApiResponse<unknown>>) {
         try {
-            const {
-                questions,        // массив вопросов от LLM
-                courseId,        // ID курса
-                quizName,        // название теста
-                categoryName     // опционально: название категории вопросов
-            } = req.body;
+            const userId = parseInt(req.params.userId, 10);
 
-            if (!questions || !courseId || !quizName) {
+            if (!userId || isNaN(userId)) {
                 return res.status(400).json({
                     success: false,
-                    error: 'Отсутсвуют обязательные поля'
+                    error: 'userId обязателен и должен быть числом'
                 });
             }
 
-            // ШАГ 1: Конвертируем JSON в Moodle XML
-            console.log('📝 1. Конвертация JSON в Moodle XML...');
-            const xmlContent = xmlConverter.convertToMoodleXml(questions);
+            const courseId = Number(process.env.MOODLE_COURSE_ID);
 
-            // ШАГ 2: Создаем категорию вопросов (или используем существующую)
-            console.log('📂 2. Подготовка категории вопросов...');
-            let categoryId: number = req.body.categoryId;
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'MOODLE_COURSE_ID не настроен в окружении'
+                });
+            }
 
-            if (!categoryId) {
-                // Получаем список категорий курса
-                const categories: QuestionCategory[] = await moodleService.getQuestionCategories(courseId);
-
-                if (categories.length > 0) {
-                    categoryId = categories[0].id; // используем первую категорию
-                    console.log(`📌 Используем существующую категорию: ${categories[0].name} (ID: ${categoryId})`);
-                } else {
-                    // Создаем новую категорию
-                    const categoryNameToUse = categoryName || `Категория для ${quizName}`;
-                    const newCategory = await moodleService.createQuestionCategory(categoryNameToUse, courseId);
-                    categoryId = newCategory.id;
-                    console.log(`✨ Создана новая категория: ${newCategory.name} (ID: ${categoryId})`);
+            const result = await this.moodleService.enrolUsers([
+                {
+                    userid: userId,
+                    courseid: courseId,
+                    roleid: 5
                 }
-            }
+            ]);
 
-            // ШАГ 3: Импортируем вопросы в банк
-            console.log('💾 3. Импорт вопросов в банк вопросов курса...');
-            const importResult = await moodleService.importQuestionsFromXml(xmlContent, categoryId);
-            console.log(`📊 Импортировано вопросов: ${importResult.imported || questions.length}`);
-
-            // ШАГ 4: Создаем тест в курсе
-            console.log('📋 4. Создание теста в курсе...');
-            const quiz: Quiz = await moodleService.createQuiz(courseId, quizName, `Автоматически созданный тест на основе LLM`);
-            const quizId = quiz.id;
-            console.log(`✅ Тест создан: ${quiz.name} (ID: ${quizId})`);
-
-            // ШАГ 5: Получаем список импортированных вопросов
-            console.log('🔍 5. Получение списка вопросов из банка...');
-            const questionsInBank: BankQuestion[] = await moodleService.getQuestionsByCategory(categoryId);
-
-            // Берем последние N вопросов (сколько импортировали)
-            const recentQuestions = questionsInBank.slice(-questions.length);
-            console.log(`📚 Найдено ${recentQuestions.length} вопросов для добавления`);
-
-            // ШАГ 6: Добавляем вопросы в тест
-            console.log('➕ 6. Добавление вопросов в тест...');
-            let addedCount = 0;
-
-            for (let i = 0; i < recentQuestions.length; i++) {
-                const question = recentQuestions[i];
-                await moodleService.addQuestionToQuiz(quizId, question.id, 1.0, i);
-                addedCount++;
-                console.log(`  ✅ Вопрос ${i + 1}/${recentQuestions.length} добавлен (ID: ${question.id})`);
-            }
-
-            console.log(`🎉 Готово! Создан тест "${quizName}" с ${addedCount} вопросами`);
-
-            res.json({
+            return res.json({
                 success: true,
-                data: {
-                    quizId: quizId,
-                    quizName: quizName,
-                    courseId: courseId,
-                    questionsImported: addedCount,
-                    categoryId: categoryId
-                },
-                message: `Тест "${quizName}" успешно создан с ${addedCount} вопросами`
+                message: `Пользователь ${userId} добавлен в курс ${courseId}`,
+                data: result
             });
 
         } catch (error: any) {
-            console.error('❌ Ошибка:', error);
-            res.status(500).json({
+            return res.status(500).json({
                 success: false,
-                error: error.message,
-                details: error.response?.data || null
+                error: error.message || 'Ошибка при зачислении пользователя'
             });
         }
     }
 
-    // Остальные методы...
-    async getCourseContents(req: Request, res: Response) {
+    async unenrolUserFromCourse(req: Request<{ userId: string }>, res: Response<ApiResponse<UnenrolmentResult>>) {
         try {
-            const { courseId } = req.params;
-            const contents = await moodleService.getCourseContents(Number(courseId));
-            res.json({ success: true, data: contents });
+            const userId = parseInt(req.params.userId, 10);
+
+            if (!userId || isNaN(userId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'userId обязателен и должен быть числом'
+                });
+            }
+
+            const courseId = Number(process.env.MOODLE_COURSE_ID);
+
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'MOODLE_COURSE_ID не настроен в окружении'
+                });
+            }
+
+            const enrolledUsers = await this.moodleService.getEnrolledUsers(courseId);
+            const isEnrolled = (enrolledUsers as EnrolledUser[]).some((u) => u.id === userId);
+
+            if (!isEnrolled) {
+                return res.status(404).json({
+                    success: false,
+                    error: `Пользователь ${userId} не зачислен в курс ${courseId}`
+                });
+            }
+
+            const result = await this.moodleService.unenrolUsers([
+                {
+                    userid: userId,
+                    courseid: courseId
+                }
+            ]);
+
+            return res.json({
+                success: true,
+                message: `Пользователь ${userId} отчислен из курса ${courseId}`,
+                data: { userid: userId, courseid: courseId, status: 'unenrolled' }
+            });
+
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            return res.status(500).json({
+                success: false,
+                error: error.message || 'Ошибка при отчислении пользователя'
+            });
         }
     }
 
-    async getEnrolledUsers(req: Request, res: Response) {
+    async getCourseContents(req: Request<{ courseId: string }>, res: Response<ApiResponse<unknown>>) {
         try {
-            const { courseId } = req.params;
-            const users = await moodleService.getEnrolledUsers(Number(courseId));
-            res.json({ success: true, data: users });
+            const courseId = parseInt(req.params.courseId, 10);
+
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'courseId обязателен и должен быть числом'
+                });
+            }
+
+            const contents = await this.moodleService.getCourseContents(courseId);
+            return res.json({
+                success: true,
+                data: contents
+            });
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            return res.status(500).json({
+                success: false,
+                error: error.message || 'Ошибка при получении содержимого курса'
+            });
         }
     }
 
-    async enrolUsers(req: Request, res: Response) {
+    async getEnrolledUsers(req: Request<{ courseId: string }>, res: Response<ApiResponse<unknown>>) {
+        try {
+            const courseId = parseInt(req.params.courseId, 10);
+
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'courseId обязателен и должен быть числом'
+                });
+            }
+
+            const users = await this.moodleService.getEnrolledUsers(courseId);
+            return res.json({
+                success: true,
+                data: users
+            });
+        } catch (error: any) {
+            return res.status(500).json({
+                success: false,
+                error: error.message || 'Ошибка при получении списка пользователей'
+            });
+        }
+    }
+
+    async enrolUsers(req: Request<{}, {}, EnrolUsersRequest>, res: Response<ApiResponse<unknown>>) {
         try {
             const { users } = req.body;
 
-            if (!users || !Array.isArray(users)) {
+            if (!users || !Array.isArray(users) || users.length === 0) {
                 return res.status(400).json({
                     success: false,
-                    error: 'Body должен содержать массив users'
+                    error: 'Body должен содержать непустой массив users'
                 });
             }
 
-            const result = await moodleService.enrolUsers(users);
-            res.json({ success: true, data: result });
+            const result = await this.moodleService.enrolUsers(users);
+            return res.json({
+                success: true,
+                message: `Зачислено пользователей: ${users.length}`,
+                data: result
+            });
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            return res.status(500).json({
+                success: false,
+                error: error.message || 'Ошибка при массовом зачислении пользователей'
+            });
         }
     }
 }

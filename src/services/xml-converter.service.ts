@@ -1,26 +1,6 @@
-export interface QuestionOption {
-    text: string;
-    isCorrect: boolean;
-}
-
-export interface Question {
-    type: 'mcq' | 'numeric' | 'truefalse' | 'essay' | 'matching';
-    text: string;
-    options?: QuestionOption[];
-    correctNumeric?: number;
-    tolerance?: number;
-    correctAnswer?: boolean;
-    feedback?: string;
-    defaultGrade?: number;
-    penalty?: number;
-    hidden?: number;
-}
+import { Question } from "../types/xml.types";
 
 export class XmlConverterService {
-
-    /**
-     * Конвертирует JSON-массив вопросов в Moodle XML формат
-     */
     convertToMoodleXml(questions: Question[]): string {
         const header = this.getXmlHeader();
         const body = questions.map((q, idx) => this.convertQuestionToXml(q, idx + 1)).join('\n');
@@ -29,9 +9,6 @@ export class XmlConverterService {
         return header + body + footer;
     }
 
-    /**
-     * Конвертирует отдельный вопрос в XML
-     */
     private convertQuestionToXml(question: Question, index: number): string {
         switch (question.type) {
             case 'mcq':
@@ -49,9 +26,6 @@ export class XmlConverterService {
         }
     }
 
-    /**
-     * Конвертирует MCQ (Multiple Choice Question)
-     */
     private convertMcqToXml(question: Question, index: number): string {
         const name = this.escapeXml(this.generateQuestionName(question.text, index));
         const questionText = this.escapeXml(this.wrapInCData(question.text));
@@ -89,9 +63,6 @@ export class XmlConverterService {
         </question>`;
     }
 
-    /**
-     * Конвертирует числовой вопрос
-     */
     private convertNumericToXml(question: Question, index: number): string {
         const name = this.escapeXml(this.generateQuestionName(question.text, index));
         const questionText = this.escapeXml(this.wrapInCData(question.text));
@@ -121,9 +92,6 @@ export class XmlConverterService {
             </question>`;
     }
 
-    /**
-     * Конвертирует вопрос "Верно/Неверно"
-     */
     private convertTrueFalseToXml(question: Question, index: number): string {
         const name = this.escapeXml(this.generateQuestionName(question.text, index));
         const questionText = this.escapeXml(this.wrapInCData(question.text));
@@ -155,9 +123,6 @@ export class XmlConverterService {
             </question>`;
     }
 
-    /**
-     * Конвертирует эссе (текстовый ответ)
-     */
     private convertEssayToXml(question: Question, index: number): string {
         const name = this.escapeXml(this.generateQuestionName(question.text, index));
         const questionText = this.escapeXml(this.wrapInCData(question.text));
@@ -188,9 +153,6 @@ export class XmlConverterService {
         </question>`;
     }
 
-    /**
-     * Конвертирует вопрос на соответствие (Matching)
-     */
     private convertMatchingToXml(question: Question, index: number): string {
         const name = this.escapeXml(this.generateQuestionName(question.text, index));
         const questionText = this.escapeXml(this.wrapInCData(question.text));
@@ -227,22 +189,13 @@ export class XmlConverterService {
         </question>`;
     }
 
-    /**
-     * Генерирует имя вопроса
-     */
     private generateQuestionName(text: string, index: number): string {
-        // Берем первые 50 символов текста вопроса
         const shortText = text.replace(/\\\(.*?\\\)/g, '').substring(0, 50).trim();
         return `LLM Generated: ${shortText} (${index})`;
     }
 
-    /**
-     * Оборачивает текст в CDATA секцию
-     */
     private wrapInCData(text: string): string {
-        // Заменяем LaTeX на правильный формат Moodle
         let processedText = text
-            // Moodle использует $$ для отображения формул
             .replace(/\\\(/g, '$$')
             .replace(/\\\)/g, '$$')
             .replace(/\\\[/g, '$$')
@@ -251,9 +204,6 @@ export class XmlConverterService {
         return `<![CDATA[${processedText}]]>`;
     }
 
-    /**
-     * Экранирует XML специальные символы
-     */
     private escapeXml(text: string): string {
         return text
             .replace(/&/g, '&amp;')
@@ -263,23 +213,16 @@ export class XmlConverterService {
             .replace(/'/g, '&apos;');
     }
 
-    /**
-     * Возвращает заголовок XML файла
-     */
     private getXmlHeader(): string {
         return `<?xml version="1.0" encoding="UTF-8"?>
-<quiz>
-    <!--
-    Автоматически сгенерированный XML для импорта в Moodle
-    Создано системой авто-тестирования
-    -->`;
+            <quiz>
+                <!--
+                Автоматически сгенерированный XML для импорта в Moodle
+                Создано системой авто-тестирования
+                -->`;
     }
 
-    /**
-     * Возвращает закрывающий тег XML
-     */
     private getXmlFooter(): string {
-        return `
-</quiz>`;
+        return `</quiz>`;
     }
 }
